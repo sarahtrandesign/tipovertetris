@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tip-Over Tetris</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#f4f1ea;--fg:#1d1d1f;--panel:#fff;--line:#d9d4c7;--ok:#2f9e6b;--warn:#e0a100;--bad:#d64545;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15161a;--fg:#ececf0;--panel:#1f2128;--line:#343744}}
+:root[data-theme="dark"]{--bg:#15161a;--fg:#ececf0;--panel:#1f2128;--line:#343744}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+body{display:flex;flex-direction:column;align-items:center;padding:12px;gap:10px;overflow-x:hidden}
+h1{font-size:18px;margin:0}
+.wrap{display:flex;gap:14px;align-items:flex-start;justify-content:center;flex-wrap:wrap}
+#frame{position:relative;width:280px;height:560px}
+#stage{position:relative;width:280px;height:560px;transform-origin:50% 100%;transition:transform .25s linear;border-bottom:6px solid var(--fg)}
+#stage.over{transition:transform 1.4s cubic-bezier(.6,0,1,.6)}
+canvas{display:block;background:var(--panel);border:1px solid var(--line)}
+.side{width:150px;display:flex;flex-direction:column;gap:10px;font-size:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+.card b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;margin-bottom:4px}
+.big{font-size:22px;font-variant-numeric:tabular-nums}
+#meter{position:relative;height:14px;border-radius:7px;background:var(--line);overflow:hidden}
+#meter i{position:absolute;top:0;bottom:0;width:50%;background:var(--ok);transition:background .2s}
+#meter u{position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--fg);opacity:.5}
+#msg{position:absolute;inset:0;z-index:5;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:rgba(0,0,0,.6);color:#fff;text-align:center;padding:16px}
+#msg h2{margin:0;font-size:26px}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:10px;padding:10px 14px;cursor:pointer;touch-action:manipulation}
+#msg button{background:#fff;color:#111}
+.pad{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;width:280px}
+.hint{font-size:12px;opacity:.7;max-width:460px;text-align:center}
+</style>
+</head>
+<body>
+<h1>Tip-Over Tetris</h1>
+<div class="wrap">
+  <div id="frame"><div id="stage"><canvas id="c" width="280" height="560"></canvas></div>
+    <div id="msg"><h2 id="mt"></h2><div id="ms"></div><button id="again">Try again</button></div></div>
+  <div class="side">
+    <div class="card"><b>Score</b><div class="big" id="score">0</div></div>
+    <div class="card"><b>Lines · Level</b><div class="big"><span id="lines">0</span> · <span id="lvl">1</span></div></div>
+    <div class="card"><b>Next</b><canvas id="n" width="100" height="60" style="border:0;background:none"></canvas></div>
+    <div class="card"><b>Balance</b><div id="meter"><i id="bar"></i><u></u></div>
+      <div id="bal" style="margin-top:6px;font-size:12px">Stable</div></div>
+  </div>
+</div>
+<div class="pad">
+  <button data-k="L">◀</button><button data-k="R">▶</button><button data-k="D">▼</button><button data-k="ROT">⟳</button><button data-k="DROP">⤓</button>
+</div>
+<div class="hint">Arrows move · ↑ rotate · Space drop · P pause. Pile too much on one side and the tower tips over. The taller it gets, the less lean it tolerates.</div>
+<script>
+const W=10,H=20,S=28,cv=document.getElementById('c'),g=cv.getContext('2d'),ng=document.getElementById('n').getContext('2d');
+const stage=document.getElementById('stage'),$=id=>document.getElementById(id);
+const COL=['','#4cc9f0','#f4d35e','#b388eb','#52b788','#ef476f','#4361ee','#f78c3b'];
+const SH=[[[1,1,1,1]],[[2,2],[2,2]],[[0,3,0],[3,3,3]],[[0,4,4],[4,4,0]],[[5,5,0],[0,5,5]],[[6,0,0],[6,6,6]],[[0,0,7],[7,7,7]]];
+let grid,cur,next,bag,score,lines,level,acc,last,over,paused,danger,lean,tilt,timer,drift;
+const rot=m=>m[0].map((_,i)=>m.map(r=>r[i]).reverse());
+function draw7(){if(!bag.length){bag=[0,1,2,3,4,5,6].sort(()=>Math.random()-.5)}return SH[bag.pop()].map(r=>[...r])}
+function col(m,x,y){for(let r=0;r<m.length;r++)for(let c=0;c<m[r].length;c++)if(m[r][c]){const X=x+c,Y=y+r;if(X<0||X>=W||Y>=H||(Y>=0&&grid[Y][X]))return true}return false}
+function spawn(){cur={m:next,x:Math.floor((W-next[0].length)/2),y:0};next=draw7();if(col(cur.m,cur.x,cur.y))end('Topped out','The stack hit the ceiling.')}
+function reset(){grid=Array.from({length:H},()=>Array(W).fill(0));bag=[];next=draw7();score=lines=0;level=1;acc=0;over=paused=false;danger=lean=tilt=timer=0;stage.className='';stage.style.transform='';$('msg').style.display='none';spawn();upd()}
+function end(t,s){over=true;$('mt').textContent=t;$('ms').textContent=s+' Score: '+score;if(t==='Topped out')$('msg').style.display='flex'}
+function lock(){cur.m.forEach((row,r)=>row.forEach((v,c)=>{if(v&&cur.y+r>=0)grid[cur.y+r][cur.x+c]=v}));
+  let n=0;for(let y=H-1;y>=0;y--)if(grid[y].every(v=>v)){grid.splice(y,1);grid.unshift(Array(W).fill(0));n++;y++}
+  if(n){lines+=n;score+=[0,100,300,500,800][n]*level;level=1+Math.floor(lines/10)}
+  score+=10;spawn();upd()}
+function balance(){let n=0,sx=0,top=H;for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(grid[y][x]){n++;sx+=x+.5;if(y<top)top=y}
+  if(!n){lean=0;danger=0;return}
+  lean=sx/n-W/2;const h=H-top;danger=Math.abs(lean)*(0.5+h/10)/1.5}
+function upd(){$('score').textContent=score;$('lines').textContent=lines;$('lvl').textContent=level;balance()}
+function move(dx){if(!over&&!paused&&!col(cur.m,cur.x+dx,cur.y))cur.x+=dx}
+function turn(){if(over||paused)return;const m=rot(cur.m);for(const k of[0,-1,1,-2,2])if(!col(m,cur.x+k,cur.y)){cur.m=m;cur.x+=k;return}}
+function down(){if(over||paused)return;if(!col(cur.m,cur.x,cur.y+1)){cur.y++;return true}lock();return false}
+function drop(){if(over||paused)return;while(!col(cur.m,cur.x,cur.y+1)){cur.y++;score+=2}lock()}
+function cell(c,x,y,s,v,a){c.globalAlpha=a||1;c.fillStyle=COL[v];c.fillRect(x*s+1,y*s+1,s-2,s-2);c.globalAlpha=1}
+function render(){g.clearRect(0,0,W*S,H*S);
+  g.strokeStyle='rgba(128,128,128,.13)';for(let i=1;i<W;i++){g.beginPath();g.moveTo(i*S,0);g.lineTo(i*S,H*S);g.stroke()}
+  if(danger>.5&&lean){const a=Math.min(.35,(danger-.5)*.5);g.fillStyle='rgba(214,69,69,'+a+')';g.fillRect(lean<0?0:W*S/2,0,W*S/2,H*S)}
+  grid.forEach((r,y)=>r.forEach((v,x)=>v&&cell(g,x,y,S,v)));
+  if(!over){let gy=cur.y;while(!col(cur.m,cur.x,gy+1))gy++;
+    cur.m.forEach((r,j)=>r.forEach((v,i)=>v&&cell(g,cur.x+i,gy+j,S,v,.22)));
+    cur.m.forEach((r,j)=>r.forEach((v,i)=>v&&cell(g,cur.x+i,cur.y+j,S,v)))}
+  g.fillStyle='#fff';g.globalAlpha=.7;const cx=(W/2+lean)*S;g.beginPath();g.moveTo(cx,H*S);g.lineTo(cx-7,H*S-12);g.lineTo(cx+7,H*S-12);g.fill();g.globalAlpha=1;
+  ng.clearRect(0,0,100,60);const o=(4-next[0].length)*10/2;next.forEach((r,j)=>r.forEach((v,i)=>v&&cell(ng,i+ (o/20),j,20,v)));
+  const f=Math.min(1,danger),bar=$('bar');bar.style.width=(f*50)+'%';bar.style.left=lean<0?(50-f*50)+'%':'50%';
+  bar.style.background=f<.6?'var(--ok)':f<.85?'var(--warn)':'var(--bad)';
+  $('bal').textContent=f<.6?'Stable':f<.85?'Leaning '+(lean<0?'left':'right')+'…':'DANGER: tipping '+(lean<0?'left':'right')+'!';
+  $('bal').style.color=f>=.85?'var(--bad)':''}
+function loop(t){const dt=Math.min(100,t-(last||t));last=t;
+  if(!over&&!paused){acc+=dt;const iv=Math.max(90,800-(level-1)*65);while(acc>iv){acc-=iv;down()}
+    balance();
+    if(danger>=1)timer+=dt;else timer=Math.max(0,timer-dt*.5);
+    const target=Math.sign(lean)*Math.min(danger,1.1)*7+(timer>0?Math.sin(t/60)*timer/700:0);
+    tilt+=(target-tilt)*.1;stage.style.transform='rotate('+tilt.toFixed(2)+'deg)';
+    if(timer>2500){over=true;stage.className='over';stage.style.transform='rotate('+(Math.sign(lean)*95)+'deg)';
+      $('mt').textContent='The tower tipped over!';$('ms').textContent='Too heavy on the '+(lean<0?'left':'right')+'. Score: '+score;
+      setTimeout(()=>$('msg').style.display='flex',1300)}}
+  render();requestAnimationFrame(loop)}
+const A={L:()=>move(-1),R:()=>move(1),D:()=>{if(down())score++},ROT:turn,DROP:drop};
+addEventListener('keydown',e=>{const k={ArrowLeft:'L',ArrowRight:'R',ArrowDown:'D',ArrowUp:'ROT',x:'ROT',' ':'DROP'}[e.key];
+  if(k){e.preventDefault();A[k]();return}
+  if(e.key==='p'||e.key==='P'){if(!over)paused=!paused}if(e.key==='Enter'&&over)reset()});
+document.querySelectorAll('[data-k]').forEach(b=>b.addEventListener('click',()=>A[b.dataset.k]()));
+$('again').onclick=reset;reset();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
